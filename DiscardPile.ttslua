@@ -1,0 +1,159 @@
+--Static
+ZONE_NAME = "DISCARD_ZONE_GUID"
+PRINT_NAME = "Discard Pile"
+
+ZONE_GUID = Global.getVar(ZONE_NAME)
+
+--Variable
+loadDone = false
+playedCards = {}
+expected_discard_size = 0
+discard_count = 0
+discarding = false
+
+function onLoad(last_state)
+	if last_state ~= '' then
+		state = JSON.decode(last_state)
+		playedCards = state['playedCards'] or {}
+		discarding = state['discarding'] or false
+		discard_count = state['discard_count'] or 0
+		expected_discard_size = state['expected_discard_size'] or 0
+	end
+	loadDone = true
+end
+
+function onSave()
+	state = {
+		playedCards = playedCards,
+		discarding = discarding,
+		discard_count = discard_count,
+		expected_discard_size = expected_discard_size
+	}
+	return JSON.encode(state)
+end
+
+function onCollisionEnter(info)
+	if loadDone then
+		print('Collision enter with ' .. info['collision_object'].tag .. ' ('..info['collision_object'].guid..')')
+	end
+end
+
+function onCollisionExit(info)
+	if loadDone then
+		object = info['collision_object']
+		print('Collision exit with ' .. object.tag .. ' ('.. object.guid..')')
+
+		if Global.getVar('card_being_played') then
+			countCards(info)
+		end
+	end
+end
+
+function onObjectEnterScriptingZone(zone, enter_object)
+	if loadDone and zone.guid == ZONE_GUID then
+		print(enter_object.guid .. ' entered discard pile zone')
+		local player = enter_object.held_by_color
+
+		if Global.getVar('card_being_played') == false and player ~= nil then
+			local transform = Player[player].getHandTransform()
+
+			enter_object.interactable = false
+			enter_object.setRotationSmooth(transform.rotation, false, true)
+			enter_object.setPositionSmooth(transform.position, false, true)
+			enter_object.interactable = true
+			broadcastToColor('You cannot play cards right now!', player, stringColorToRGB('Red'))
+		end
+	end
+end
+
+function countCards(info)
+	local zone = getObjectFromGUID(ZONE_GUID)
+	local object
+
+	local inZone = zone.getObjects()
+	local primaryObj = nil
+
+	local objects_to_group = {}
+
+	for _, object in ipairs(inZone) do
+		if object.tag == 'Card' or object.tag == 'Deck' then
+			objects_to_group[#objects_to_group + 1] = object
+		end
+	end
+
+	local primaryObj = group(objects_to_group)[1]
+
+	Wait.condition(function()
+		local topCard = nil
+		local count = 0
+		local topCardGuid = nil
+
+		if primaryObj ~= nil then
+			if primaryObj.tag == 'Card' then
+				topCard = primaryObj.getName()
+				count = 1
+				topCardGuid = primaryObj.getGUID()
+			else
+				local objects = primaryObj.getObjects()
+				count = #objects
+
+				for _, object in ipairs(objects) do
+					if object['index'] == count - 1 then
+						topCard = object['name']
+						topCardGuid = object['guid']
+					end
+				end
+			end
+			local pilePosition = self.getPosition()
+			primaryObj.setPosition({pilePosition[1], pilePosition[2] + 0.2, pilePosition[3]})
+		end
+		if not discarding then
+			if topCardGuid ~= nil and playedCards[topCardGuid] ~= true then
+				print('Playing card ' .. topCard .. ' (' .. topCardGuid .. ')')
+				playedCards[topCardGuid] = true
+				Global.call('onDiscardPileChanged', {primaryObj, topCard, topCardGuid})
+			end
+		elseif count == expected_discard_size then
+			discarding = false
+			print('Discarding completed')
+		end
+	end, function() return not primaryObj.spawning end, 3, function() print('Grouping failed') end)
+end
+
+function getDeckFromZone()
+    return Global.call('getDeckFromZone', ZONE_NAME)
+end
+
+function getDeckOrCardFromZone()
+    return Global.call('getDeckOrCardFromZone', ZONE_NAME)
+end
+
+function discardCards(cards)
+	local deck = getDeckOrCardFromZone()
+	local deck_count = 0
+	if deck ~= nil then
+		if deck.tag == 'Deck' then
+			deck_count = #(deck.getObjects())
+		else
+			deck_count = 1
+		end
+	end
+
+	discard_count = #cards
+	expected_discard_size = deck_count + discard_count
+	discarding = true
+
+	local pilePosition = self.getPosition()
+	local new_deck = group(cards)[1]
+
+	Wait.condition(function()
+		new_deck.setPosition({pilePosition[1], pilePosition[2] + 0.2, pilePosition[3]})
+	end, function() return not new_deck.spawning end, 1, function() print('Spawning timed out') end)
+end
+
+function onChat(message)
+	if message == 'rd' then
+		playedCards = {}
+		print('reset')
+	end
+end

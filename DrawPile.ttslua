@@ -1,0 +1,143 @@
+--Static
+ZONE_NAME = "DRAW_ZONE_GUID"
+PRINT_NAME = "Draw Pile"
+
+--Variable
+loadDone = false
+waitId = nil
+
+function onLoad()
+	loadDone = true
+end
+
+function onCollisionEnter(info)
+	if loadDone then
+
+	end
+end
+
+function onCollisionExit(info)
+	if loadDone then
+		countCards()
+	end
+end
+
+function secondCheck()
+	countCards()
+end
+
+function countCards()
+	local deck = nil
+	local deck_ct = 0
+	local card_ct = 0
+	local zone = getObjectFromGUID(Global.getVar(ZONE_NAME))
+	local object
+
+	local inZone = zone.getObjects()
+    local primaryObj = nil
+	for _, object in ipairs(inZone) do
+		if object.tag == 'Card' or object.tag == 'Deck' then
+			if primaryObj == nil then
+	            primaryObj = object
+	        else
+	            primaryObj = primaryObj.putObject(object)
+	        end
+		end
+	end
+
+	local topCard = 'None'
+
+	if primaryObj ~= nil then
+        local pilePosition = self.getPosition()
+        primaryObj.setPositionSmooth({pilePosition[1], primaryObj.getPosition()[2], pilePosition[3]}, false, false)
+	end
+end
+
+function getDeckFromZone()
+    return Global.call('getDeckFromZone', ZONE_NAME)
+end
+
+function drawTopCard(params)
+    local deck = getDeckFromZone()
+    player = params['player']
+    count = params['count']
+	zone = params['zone']
+    print('Dealing ' .. (count or 1) .. ' card(s) to ' .. player)
+    deck.deal(count or 1, player)
+end
+
+function drawBottomCard(player)
+    local deck = getDeckFromZone()
+    local player_obj = Player[player]
+    local hand_zone = player_obj.getHandTransform()
+    local hand_pos = hand_zone['position']
+    deck.takeObject({
+        position          = {hand_pos[1], hand_pos[2] + 0.1, hand_pos[3]},
+        rotation          = hand_zone['rotation'],
+        smooth            = true,
+        top               = false
+    })
+end
+
+function swapTopAndBottomCards()
+    local deck = getDeckFromZone()
+    local deck_pos = self.getPosition()
+
+    if #deck.getObjects() < 2 then
+        return
+    end
+
+    deck.setPositionSmooth({deck_pos[1], deck_pos[2] + 0.5, deck_pos[3]}, false, false)
+
+    local top = deck.takeObject({
+        position          = {deck_pos[1], deck_pos[2], deck_pos[3]},
+        top               = true
+    })
+
+    local bottom = deck.takeObject({
+        position          = {deck_pos[1], deck_pos[2] + 1.0, deck_pos[3]},
+        top               = false
+    })
+
+    broadcastToAll('The top and bottom cards have been swapped.')
+end
+
+function peekTopCards(count)
+    local deck = getDeckFromZone()
+    local objects = deck.getObjects()
+    local ret = {}
+    for i=1, count do
+        if objects[i] ~= nil then
+            ret[i] = objects[i]['name']
+        end
+    end
+    return ret
+end
+
+function removeCardsWithName(name)
+    local deck = getDeckFromZone()
+    local objects = deck.getObjects()
+    local deck_pos = self.getPosition()
+
+    local bomb_cards = {}
+
+    for _, object in ipairs(objects) do
+        if object['name'] == name then
+            bomb_cards[#bomb_cards + 1] = object['guid']
+        end
+    end
+
+    for _, guid in ipairs(bomb_cards) do
+        deck.takeObject({
+            position          = {deck_pos[1], deck_pos[2] + 1.0, deck_pos[3]},
+            guid              = guid
+        })
+    end
+
+    --deck.shuffle()
+end
+
+function shuffle()
+    local deck = getDeckFromZone()
+    deck.shuffle()
+end

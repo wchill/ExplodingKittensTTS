@@ -1,0 +1,490 @@
+--[[ Lua code. See documentation: http://berserk-games.com/knowledgebase/scripting/ --]]
+
+--[[ The OnLoad function. This is called after everything in the game save finishes loading.
+Most of your script code goes here. --]]
+
+--Scripting Zones
+DISCARD_ZONE_GUID = '5baf56'
+DRAW_ZONE_GUID = '6280d8'
+
+--Player hand scripting zones
+SCRIPTING_ZONE_GUIDS = {
+    White = '9c9e19',
+    Brown = 'db3581',
+    Red = 'b6c0f8',
+    Orange = 'e0d4c2',
+    Yellow = '2f7bf2',
+    Green = '3df377',
+    Teal = '84744c',
+    Blue = 'a93266',
+    Purple = 'b7e03c',
+    Pink = 'f1f91f'
+}
+
+HIDDEN_ZONE_GUIDS = {
+    White = 'd26dc2',
+    Brown = '96650e',
+    Red = 'fab4a9',
+    Orange = 'ef8c36',
+    Yellow = '97a3d0',
+    Green = 'acd560',
+    Teal = 'e5cd9e',
+    Blue = '7e9659',
+    Purple = 'a97544',
+    Pink = '07d6cd'
+}
+
+--Object GUIDs
+DRAW_PILE_GUID = 'c71ba0'
+DISCARD_PILE_GUID = '8bc79c'
+IMPLODING_KITTEN_ACTIVE_GUID = 'f5691f'
+
+--Constants
+ALL_COLORS = {'White', 'Brown', 'Red', 'Orange', 'Yellow', 'Green', 'Teal', 'Blue', 'Purple', 'Pink'}
+NO_EFFECT_CARDS = {'Beard Cat', 'Cattermelon', 'Hairy Potato Cat', 'Rainbow-Ralphing Cat', 'Tacocat'}
+
+--Config options
+USE_TURN_SYSTEM = true
+
+--Status variables
+card_being_played = true
+
+current_player_remaining_turns = 1
+next_player_remaining_turns = 1
+
+active_players = {}
+
+function onload()
+    --[[ print('Onload!') --]]
+    --Turns.enable = true
+    --Turns.pass_turns = false
+    function callback(object_spawned, color)
+        print(object_spawned.guid)
+    end
+
+    local test = getObjectFromGUID(HIDDEN_ZONE_GUIDS['Brown']).clone()
+    test.setPosition({10, 20, 30})
+
+    for _, player in ipairs(Player.getColors()) do
+        if player ~= 'Black' and player ~= 'Grey' then
+            active_players[player] = true
+        end
+    end
+
+    for _, color in ipairs(ALL_COLORS) do
+        local transform = Player[color].getHandTransform()
+        if false and transform ~= nil then
+            obj = spawnObject({
+                --type              = 'ScriptingTrigger',
+                type              = 'FogOfWarTrigger',
+                position          = transform.position,
+                rotation          = transform.rotation,
+                scale             = {transform.scale[1] * 4 / 3, transform.scale[2] * 4 / 3, transform.scale[3] * 4 / 3},
+                callback_function = callback
+                --sound             = -- bool,
+                --params            = -- Table,
+                --snap_to_grid      = -- bool,
+            })
+        end
+        if false and transform ~= nil then
+            local dist = 5
+            local new_position = {
+                transform.position[1] + dist * transform.forward[1],
+                transform.position[2] + dist * transform.forward[2],
+                transform.position[3] + dist * transform.forward[3],
+            }
+            local obj = spawnObject({
+                --type              = 'ScriptingTrigger',
+                type              = 'PlayerPawn',
+                position          = new_position,
+                rotation          = transform.rotation,
+                scale             = {3, 3, 3},
+                callback_function = function(obj) callback(obj, color) end,
+                --sound             = -- bool,
+                --params            = -- Table,
+                --snap_to_grid      = -- bool,
+            })
+        end
+    end
+    activatePlayerZones('White')
+end
+
+--[[ The Update function. This is called once per frame. --]]
+function update ()
+    --[[ print('Update loop!') --]]
+end
+
+function activatePlayerZones(player)
+    local transform = Player[player].getHandTransform()
+    if transform == nil then
+        print('Unable to find hand zone for ' .. player .. ', zone activation failed')
+        return
+    end
+
+    local convertedScale = {transform.scale[1] * 4 / 3, transform.scale[2] * 4 / 3, transform.scale[3] * 4 / 3}
+
+    local scriptingZone = getObjectFromGUID(SCRIPTING_ZONE_GUIDS[player])
+    local hiddenZone = getObjectFromGUID(HIDDEN_ZONE_GUIDS[player])
+
+    if scriptingZone == nil then
+        print('Could not get scripting zone')
+    end
+    if hiddenZone == nil then
+        print('Could not get hidden zone')
+    end
+
+    scriptingZone.setPosition(transform.position)
+    scriptingZone.setRotation(transform.rotation)
+    scriptingZone.setScale(convertedScale)
+
+    hiddenZone.setPosition(transform.position)
+    hiddenZone.setRotation(transform.rotation)
+    hiddenZone.setScale(convertedScale)
+end
+
+function deactivatePlayerZones(player)
+    local scriptingZone = getObjectFromGUID(SCRIPTING_ZONE_GUIDS[player])
+    local hiddenZone = getObjectFromGUID(HIDDEN_ZONE_GUIDS[player])
+
+    if scriptingZone == nil then
+        print('Could not get scripting zone')
+    end
+    if hiddenZone == nil then
+        print('Could not get hidden zone')
+    end
+
+    scriptingZone.setPosition({100, 100, 100})
+    scriptingZone.setScale({0.01, 0.01, 0.01})
+
+    hiddenZone.setPosition({100, 100, 100})
+    hiddenZone.setScale({0.01, 0.01, 0.01})
+end
+
+function onObjectEnterScriptingZone(zone, enter_object)
+    -- body...
+end
+
+function onObjectLeaveScriptingZone(zone, leave_object)
+    -- body...
+end
+
+function onDiscardPileChanged(params)
+    local deck = params[1]
+    local card = params[2]
+    local card_guid = params[3]
+    if card == nil or not card_being_played then
+        return
+    end
+
+    local player = Turns.turn_color
+
+    resolveCard(player, deck, card, card_guid)
+end
+
+function onPlayerTurnStart(player_color_start, player_color_previous)
+    current_player_remaining_turns = next_player_remaining_turns
+    next_player_remaining_turns = 1
+    if current_player_remaining_turns ~= 1 then
+        broadcastToAll(player_color_start .. ' must take ' .. current_player_remaining_turns .. ' turns!')
+    end
+end
+
+function resolveCard(player, deck, card, card_guid)
+    local drawPile = getObjectFromGUID(DRAW_PILE_GUID)
+    local discardPile = getObjectFromGUID(DISCARD_PILE_GUID)
+    if card == 'Favor' then
+        -- do nothing, the players should handle this
+        broadcastToColor('Pick a player and have them give you a card of their choosing', player)
+    elseif card == 'Favor' then
+        -- do nothing, the players should handle this
+        broadcastToAll('All players must place 1 card facedown in the draw pile then shuffle it.')
+    elseif card == 'Shuffle' then
+        drawPile.call('shuffle')
+    elseif card == 'See the Future' then
+        local cards = drawPile.call('peekTopCards', 3)
+        printToColor('[b]The next 3 cards are:[/b]', player)
+        for _, card in ipairs(cards) do
+            printToColor(card, player)
+        end
+    elseif card == 'See the Future (5x)' then
+        local cards = drawPile.call('peekTopCards', 5)
+        printToColor('[b]The next 5 cards are:[/b]', player)
+        for _, card in ipairs(cards) do
+            printToColor(card, player)
+        end
+    elseif card == 'Alter the Future' then
+        drawPile.call('drawTopCard', {player=player, count=3})
+    elseif card == 'Alter the Future (5x)' then
+        drawPile.call('drawTopCard', {player=player, count=5})
+    elseif card == 'Reverse' then
+        reverseTurnOrder()
+    elseif card == 'Draw from the Bottom' then
+        drawPile.call('drawBottomCard', player)
+    elseif card == 'Swap Top and Bottom' then
+        drawPile.call('swapTopAndBottomCards')
+    elseif card == 'Curse of the Cat Butt' then
+        local hand_objs = Player[player].getHandObjects()
+        for _, obj in ipairs(hand_objs) do
+            obj.setHiddenFrom({player})
+        end
+    elseif card == 'Skip' then
+        current_player_remaining_turns = current_player_remaining_turns - 1
+        if current_player_remaining_turns <= 0 then
+            passTurn()
+        else
+            broadcastToAll(player_color_start .. ' still has ' .. current_player_remaining_turns .. ' turn left!')
+        end
+    elseif card == 'Super Skip' then
+        current_player_remaining_turns = 0
+        passTurn()
+    elseif card == 'Attack' then
+        current_player_remaining_turns = 0
+        next_player_remaining_turns = 2
+        passTurn()
+    elseif card == 'Targeted Attack' then
+        current_player_remaining_turns = 0
+        next_player_remaining_turns = 2
+        createPlayerSelectButtons(player, deck, card_guid, 'testCallback')
+    elseif card == 'Catomic Bomb' then
+        drawPile.call('removeCardsWithName', 'Exploding Kitten')
+    elseif card == 'Imploding Kitten (not activated)' then
+        getObjectFromGUID(IMPLODING_KITTEN_ACTIVE_GUID).deal(1, player)
+        broadcastToColor('Place the Imploding Kitten card in your hand anywhere in the draw pile.', player)
+        broadcastToAll('The Imploding Kitten has been activated!')
+    elseif card == 'Imploding Kitten (activated)' then
+        broadcastToAll(player .. ' instantly loses!')
+        removePlayer(player)
+    end
+end
+
+function testCallback(target_color, calling_color, current_card)
+    print(calling_color .. ' selected ' .. target_color)
+    removeFakeCards('Targeted Attack')
+    card_being_played = true
+end
+
+function removeFakeCards(card_name)
+    print(card_name)
+	local allObjs = getAllObjects()
+	for _, object in ipairs(allObjs) do
+		if object.tag == 'Card' and (object.getDescription() == 'Fake ' .. card_name .. ' Card') then
+			destroyObject(object)
+		end
+	end
+end
+
+function onChat(message, player)
+    if message == 'setw' then
+        setPlayerTurn('White')
+    elseif message == 'setp' then
+        setPlayerTurn('Pink')
+    elseif message == 'setb' then
+        setPlayerTurn('Brown')
+    end
+end
+
+function createPlayerSelectButtons(currentPlayer, deck, card_guid, callback_func_name)
+    card_being_played = false
+    local deck_pos = deck.getPosition()
+
+    local current_card = getObjectFromGUID(card_guid)
+    local should_remove = false
+
+    function cloneTempCard(obj)
+        current_card = current_card.clone({0, 0, 180})
+        current_card.setLock(true)
+        current_card.setPosition({deck_pos[1], deck_pos[2] + 0.5, deck_pos[3]})
+    end
+
+    if current_card == nil then
+        print('take object')
+        current_card = deck.takeObject({
+            position          = {deck_pos[1], deck_pos[2] + 0.3, deck_pos[3]},
+            rotation          = deck.getRotation(),
+            callback_function = cloneTempCard,
+            smooth            = true,
+            guid              = card_guid
+        })
+    else
+        print('changing')
+        cloneTempCard(current_card)
+    end
+
+    function createPlayerSelectButtonsCoroutine()
+        broadcastToColor('Click on the card in front of the person you want to target.', currentPlayer, {1, 1, 1})
+        local card_name = 'Fake ' .. current_card.getName() .. ' Card'
+        for playerColor, state in pairs(active_players) do
+            if state == true then
+                _G[playerColor .. callback_func_name] = function(obj, clicking_player, alt)
+                    _G[callback_func_name](playerColor, clicking_player, current_card)
+                end
+
+                local params = {rotation = {0, 0, 180}}
+                local card = current_card.clone(params)
+                card.setDescription(card_name)
+                local color_table = stringColorToRGB(playerColor)
+                local color_str = '{' .. color_table[1] .. ', ' .. color_table[2] .. ', ' .. color_table[3] .. ', ' .. color_table[4] .. '}'
+                card.setLuaScript(
+                    'playerColor = \'' .. playerColor .. '\'\r\n\r\n' ..
+                    'function onCollisionEnter(collision_info)\r\n' ..
+                    '	local ph = Player[playerColor].getPlayerHand()\r\n' ..
+                    '	if ph then\r\n' ..
+                    '		self.setRotation({0, ph[\'rot_y\']+180, 0})\r\n' ..
+                    '	end\r\n' ..
+                    '	self.setLock(true)\r\n' ..
+                    'end\r\n\r\n' ..
+                    'function onLoad(saveString)\r\n' ..
+                    '	local button = {}\r\n' ..
+                    '	button.click_function = \'' .. playerColor .. callback_func_name .. '\'\r\n' ..
+                    '	button.label = \'' .. playerColor .. '\'\r\n' ..
+                    '	button.function_owner = Global\r\n' ..
+                    '	button.position = {0, 3, 0}\r\n' ..
+                    '	button.rotation = {0, 0, 0}\r\n' ..
+                    '	button.width = 800\r\n' ..
+                    '	button.height = 600\r\n' ..
+                    '	button.font_size = 150\r\n' ..
+                    '   button.color = ' .. color_str .. '\r\n' ..
+                    '   button.font_color = {0, 0, 0, 1}\r\n' ..
+                    '	self.createButton(button)\r\n' ..
+                    'end')
+                local transform = Player[playerColor].getHandTransform()
+                local dist = 15
+                local new_position = {
+                    transform.position[1] + dist * transform.forward[1],
+                    transform.position[2] + dist * transform.forward[2],
+                    transform.position[3] + dist * transform.forward[3],
+                }
+                card.setPositionSmooth(new_position, false, false)
+                card.setRotationSmooth(transform.rotation, false, false)
+                wait(3)
+            end
+        end
+        destroyObject(current_card)
+        return true
+    end
+
+    Wait.condition(function()
+    	startLuaCoroutine(Global, 'createPlayerSelectButtonsCoroutine')
+    end, function() return not current_card.spawning end, 3, function() print('Failed to spawn top card') end)
+end
+
+function removePlayer(player)
+    active_players[player] = false
+    deactivatePlayerZones(player)
+    local discardPile = getObjectFromGUID(DISCARD_PILE_GUID)
+    local cards = {}
+    for _, object in ipairs(Player[player].getHandObjects()) do
+        if object.tag == 'Card' then
+            cards[#cards + 1] = object
+        end
+    end
+    discardPile.call('discardCards', cards)
+end
+
+function endTurn(draw)
+    current_player_remaining_turns = current_player_remaining_turns - 1
+    if draw == true then
+        local drawPile = getObjectFromGUID(DRAW_PILE_GUID)
+        drawPile.call('drawTopCard', {player, 1})
+    end
+end
+
+function setPlayerTurn(new_player)
+    if USE_TURN_SYSTEM then
+        setTurn(new_player)
+    end
+end
+
+function reverseTurnOrder()
+    if USE_TURN_SYSTEM then
+        Turns.reverse_order = not Turns.reverse_order
+    end
+end
+
+function onSuccessfulPlayerDraw(card)
+    local player = Turns.turn_color
+    local hand_objs = Player[player].getHandObjects()
+    for _, obj in ipairs(hand_objs) do
+        obj.setHiddenFrom({})
+    end
+end
+
+function passTurn()
+    setTurn(Turns.getNextTurnColor())
+end
+
+function previousTurn()
+    setTurn(Turns.getPreviousTurnColor())
+end
+
+--Hack to change the current player turn if using TTS's turn API
+function setTurn(new_player)
+    if Turns.type == 1 then
+        Turns.type = 2
+        Turns.order = Player.getAvailableColors()
+    end
+    local order = Turns.order
+    Turns.enable = false
+    new_player_index = 1
+    for i, color in ipairs(order) do
+        if color == new_player then
+            new_player_index = i
+        end
+    end
+    rotate_inplace(order, 11 - new_player_index, #order)
+    Turns.order = order
+    Turns.enable = true
+end
+
+function getTurnOrder()
+    local players = {}
+    for _, player in pairs(Player.getAvailableColors()) do
+        if state == true then
+            players[#players + 1] = player
+        end
+    end
+end
+
+function reverse(t, i, j)
+  while i < j do
+    t[i], t[j] = t[j], t[i]
+    i, j = i+1, j-1
+  end
+end
+
+function rotate_inplace(t, d, n)
+  n = n or #t
+  d = (d or 1) % n
+  reverse(t, 1, n)
+  reverse(t, 1, d)
+  reverse(t, d+1, n)
+end
+
+function getDeckFromZone(zone_name)
+    local zone = getObjectFromGUID(Global.getVar(zone_name))
+    local inZone = zone.getObjects()
+	for _, object in ipairs(inZone) do
+		if object.tag == 'Deck' then
+			return object
+		end
+	end
+    return nil
+end
+
+function getDeckOrCardFromZone(zone_name)
+    local zone = getObjectFromGUID(Global.getVar(zone_name))
+    local inZone = zone.getObjects()
+    local card = nil
+	for _, object in ipairs(inZone) do
+		if object.tag == 'Deck' then
+			return object
+        elseif object.tag == 'Card' then
+            card = object
+		end
+	end
+    return card
+end
+
+function wait(numFrames)
+	for i=1,numFrames,1 do coroutine.yield(0) end
+end
