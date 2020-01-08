@@ -37,38 +37,29 @@ HIDDEN_ZONE_GUIDS = {
 --Object GUIDs
 DRAW_PILE_GUID = 'c71ba0'
 DISCARD_PILE_GUID = '8bc79c'
+TURN_TRACKER_GUID = 'ecde0e'
 IMPLODING_KITTEN_ACTIVE_GUID = 'f5691f'
 
 --Constants
 ALL_COLORS = {'White', 'Brown', 'Red', 'Orange', 'Yellow', 'Green', 'Teal', 'Blue', 'Purple', 'Pink'}
-NO_EFFECT_CARDS = {'Beard Cat', 'Cattermelon', 'Hairy Potato Cat', 'Rainbow-Ralphing Cat', 'Tacocat'}
-
---Config options
-USE_TURN_SYSTEM = true
+NO_EFFECT_CARDS = {'Beard Cat', 'Cattermelon', 'Hairy Potato Cat', 'Rainbow-Ralphing Cat', 'Tacocat', 'Feral Cat'}
 
 --Status variables
-card_being_played = true
+drawing = false
+alter_the_future = false
+targeted_attack = false
+defusing = false
+required_defuse = 0
+kittens_played = 0
+defuses_played = 0
 
-current_player_remaining_turns = 1
-next_player_remaining_turns = 1
-
-active_players = {}
 
 function onload()
     --[[ print('Onload!') --]]
-    --Turns.enable = true
-    --Turns.pass_turns = false
+    Turns.enable = false
+
     function callback(object_spawned, color)
         print(object_spawned.guid)
-    end
-
-    local test = getObjectFromGUID(HIDDEN_ZONE_GUIDS['Brown']).clone()
-    test.setPosition({10, 20, 30})
-
-    for _, player in ipairs(Player.getColors()) do
-        if player ~= 'Black' and player ~= 'Grey' then
-            active_players[player] = true
-        end
     end
 
     for _, color in ipairs(ALL_COLORS) do
@@ -106,7 +97,6 @@ function onload()
             })
         end
     end
-    activatePlayerZones('White')
 end
 
 --[[ The Update function. This is called once per frame. --]]
@@ -146,56 +136,88 @@ function deactivatePlayerZones(player)
     local scriptingZone = getObjectFromGUID(SCRIPTING_ZONE_GUIDS[player])
     local hiddenZone = getObjectFromGUID(HIDDEN_ZONE_GUIDS[player])
 
-    if scriptingZone == nil then
-        print('Could not get scripting zone')
+    if scriptingZone ~= nil then
+        scriptingZone.setPosition({100, 100, 100})
+        scriptingZone.setScale({0.01, 0.01, 0.01})
     end
-    if hiddenZone == nil then
-        print('Could not get hidden zone')
+    if hiddenZone ~= nil then
+        hiddenZone.setPosition({100, 100, 100})
+        hiddenZone.setScale({0.01, 0.01, 0.01})
     end
-
-    scriptingZone.setPosition({100, 100, 100})
-    scriptingZone.setScale({0.01, 0.01, 0.01})
-
-    hiddenZone.setPosition({100, 100, 100})
-    hiddenZone.setScale({0.01, 0.01, 0.01})
 end
 
 function onObjectEnterScriptingZone(zone, enter_object)
-    -- body...
+    if enter_object.tag == 'Card' then
+        local drawing_player = nil
+        for color, scripting_zone_guid in pairs(SCRIPTING_ZONE_GUIDS) do
+            if zone.guid == scripting_zone_guid then
+                drawing_player = color
+                break
+            end
+        end
+
+        if drawing_player ~= nil and (enter_object.held_by_color == nil or drawing_player == enter_object.held_by_color) then
+            Wait.condition(function()
+                local card_name = enter_object.getName()
+                print('check in enter ' .. card_name .. ' in ' .. zone.guid)
+                if not actionInProgress() and card_name == 'Exploding Kitten' then
+                    if checkExplodingKittenCount(drawing_player) == false then
+                        return
+                    end
+                end
+            end, function() return enter_object.resting end)
+        end
+    end
 end
 
 function onObjectLeaveScriptingZone(zone, leave_object)
-    -- body...
+    if leave_object.tag == 'Card' then
+        local turnTracker = getObjectFromGUID(TURN_TRACKER_GUID)
+        local drawing_player = nil
+        for color, scripting_zone_guid in pairs(SCRIPTING_ZONE_GUIDS) do
+            if zone.guid == scripting_zone_guid then
+                drawing_player = color
+                break
+            end
+        end
+
+        if drawing_player ~= nil and turnTracker.call('findIndexOfPlayer', drawing_player) ~= nil then
+            Wait.condition(function()
+                local card_name = leave_object.getName()
+                if not actionInProgress() and card_name == 'Streaking Kitten' then
+                    print('check in leave')
+                    if checkExplodingKittenCount(drawing_player) == false then
+                        return
+                    end
+                end
+                drawing = false
+            end, function() return leave_object.resting and leave_object.held_by_color == nil end)
+        end
+    end
 end
 
 function onDiscardPileChanged(params)
     local deck = params[1]
     local card = params[2]
     local card_guid = params[3]
-    if card == nil or not card_being_played then
+    if card == nil or actionInProgress() then
         return
     end
 
-    local player = Turns.turn_color
-
-    resolveCard(player, deck, card, card_guid)
+    resolveCard(deck, card, card_guid)
 end
 
-function onPlayerTurnStart(player_color_start, player_color_previous)
-    current_player_remaining_turns = next_player_remaining_turns
-    next_player_remaining_turns = 1
-    if current_player_remaining_turns ~= 1 then
-        broadcastToAll(player_color_start .. ' must take ' .. current_player_remaining_turns .. ' turns!')
-    end
-end
-
-function resolveCard(player, deck, card, card_guid)
+function resolveCard(deck, card, card_guid)
     local drawPile = getObjectFromGUID(DRAW_PILE_GUID)
     local discardPile = getObjectFromGUID(DISCARD_PILE_GUID)
+    local turnTracker = getObjectFromGUID(TURN_TRACKER_GUID)
+
+    local player = turnTracker.call('getCurrentPlayerColor')
+
     if card == 'Favor' then
         -- do nothing, the players should handle this
         broadcastToColor('Pick a player and have them give you a card of their choosing', player)
-    elseif card == 'Favor' then
+    elseif card == 'Garbage Collection' then
         -- do nothing, the players should handle this
         broadcastToAll('All players must place 1 card facedown in the draw pile then shuffle it.')
     elseif card == 'Shuffle' then
@@ -213,13 +235,16 @@ function resolveCard(player, deck, card, card_guid)
             printToColor(card, player)
         end
     elseif card == 'Alter the Future' then
-        drawPile.call('drawTopCard', {player=player, count=3})
+        alterTheFuture(player, 3)
     elseif card == 'Alter the Future (5x)' then
-        drawPile.call('drawTopCard', {player=player, count=5})
+        alterTheFuture(player, 5)
     elseif card == 'Reverse' then
-        reverseTurnOrder()
+        turnTracker.call('reverseTurnOrder')
+        turnTracker.call('endCurrentTurn')
     elseif card == 'Draw from the Bottom' then
+        drawing = true
         drawPile.call('drawBottomCard', player)
+        Wait.condition(function() turnTracker.call('endCurrentTurn') end, function() return drawing == false end)
     elseif card == 'Swap Top and Bottom' then
         drawPile.call('swapTopAndBottomCards')
     elseif card == 'Curse of the Cat Butt' then
@@ -227,44 +252,89 @@ function resolveCard(player, deck, card, card_guid)
         for _, obj in ipairs(hand_objs) do
             obj.setHiddenFrom({player})
         end
+        shuffleCardsInPlayerHand(player)
     elseif card == 'Skip' then
-        current_player_remaining_turns = current_player_remaining_turns - 1
-        if current_player_remaining_turns <= 0 then
-            passTurn()
-        else
-            broadcastToAll(player_color_start .. ' still has ' .. current_player_remaining_turns .. ' turn left!')
-        end
+        turnTracker.call('endCurrentTurn')
     elseif card == 'Super Skip' then
-        current_player_remaining_turns = 0
-        passTurn()
+        turnTracker.call('nextTurn')
     elseif card == 'Attack' then
-        current_player_remaining_turns = 0
-        next_player_remaining_turns = 2
-        passTurn()
+        turnTracker.call('setNextPlayerTurns', 2)
+        turnTracker.call('nextTurn')
     elseif card == 'Targeted Attack' then
-        current_player_remaining_turns = 0
-        next_player_remaining_turns = 2
-        createPlayerSelectButtons(player, deck, card_guid, 'testCallback')
+        turnTracker.call('setNextPlayerTurns', 2)
+        targeted_attack = true
+        createPlayerSelectButtons(player, deck, card_guid, 'targetedAttack')
+        broadcastToColor('Pass your turn to the player you want to target!', player)
     elseif card == 'Catomic Bomb' then
+        drawPile.call('shuffle')
         drawPile.call('removeCardsWithName', 'Exploding Kitten')
+        broadcastToAll('All Exploding Kittens have been moved to the top!')
+        turnTracker.call('endCurrentTurn')
     elseif card == 'Imploding Kitten (not activated)' then
         getObjectFromGUID(IMPLODING_KITTEN_ACTIVE_GUID).deal(1, player)
         broadcastToColor('Place the Imploding Kitten card in your hand anywhere in the draw pile.', player)
         broadcastToAll('The Imploding Kitten has been activated!')
     elseif card == 'Imploding Kitten (activated)' then
-        broadcastToAll(player .. ' instantly loses!')
         removePlayer(player)
+    elseif card == 'Defuse' then
+        defuses_played = defuses_played + 1
+        if kittens_played > defuses_played then
+            broadcastToAll(player .. ' must defuse ' .. (kittens_played - defuses_played) .. ' more kitten(s).')
+        else
+            defusing = false
+            broadcastToAll('All kittens defused!')
+        end
+    elseif card == 'Exploding Kitten' then
+        kittens_played = kittens_played + 1
+        if kittens_played > defuses_played then
+            broadcastToAll(player .. ' must defuse ' .. (kittens_played - defuses_played) .. ' more kitten(s).')
+            defusing = true
+        end
     end
 end
 
-function testCallback(target_color, calling_color, current_card)
-    print(calling_color .. ' selected ' .. target_color)
-    removeFakeCards('Targeted Attack')
-    card_being_played = true
+function targetedAttack(target_color, calling_color, current_card)
+    local turnTracker = getObjectFromGUID(TURN_TRACKER_GUID)
+    if calling_color == turnTracker.call('getCurrentPlayerColor') then
+        print(calling_color .. ' selected ' .. target_color)
+        removeFakeCards('Targeted Attack')
+        turnTracker.call('nextTurn', target_color)
+    end
+end
+
+function alterTheFuture(player, draw_size)
+    local drawPile = getObjectFromGUID(DRAW_PILE_GUID)
+
+    local new_zones = createSecondHiddenZoneForPlayer(player)
+    local hidden_zone = new_zones[1]
+    local scripting_zone = new_zones[2]
+    alter_the_future = true
+
+    local deck_size = drawPile.call('getDeckSize')
+    if draw_size > deck_size then
+        draw_size = deck_size
+    end
+
+    callAfterSpawnFinished(function()
+        local existing_obj_count = #(scripting_zone.getObjects())
+
+        drawPile.call('drawTopCard', {player=player, count=draw_size, zone=hidden_zone})
+
+        Wait.condition(function()
+            drawPile.call('runFuncWhenDeckSizeHits', {self, 'postAlterTheFuture', {hidden_zone, scripting_zone}, deck_size})
+            broadcastToColor('Place the cards back onto the deck in any order', player)
+        end, function() return draw_size + existing_obj_count >= #(scripting_zone.getObjects()) end)
+    end, hidden_zone, scripting_zone)
+end
+
+function postAlterTheFuture(zones)
+    for _, zone in ipairs(zones) do
+        destroyObject(zone)
+    end
+    alter_the_future = false
 end
 
 function removeFakeCards(card_name)
-    print(card_name)
 	local allObjs = getAllObjects()
 	for _, object in ipairs(allObjs) do
 		if object.tag == 'Card' and (object.getDescription() == 'Fake ' .. card_name .. ' Card') then
@@ -273,18 +343,7 @@ function removeFakeCards(card_name)
 	end
 end
 
-function onChat(message, player)
-    if message == 'setw' then
-        setPlayerTurn('White')
-    elseif message == 'setp' then
-        setPlayerTurn('Pink')
-    elseif message == 'setb' then
-        setPlayerTurn('Brown')
-    end
-end
-
 function createPlayerSelectButtons(currentPlayer, deck, card_guid, callback_func_name)
-    card_being_played = false
     local deck_pos = deck.getPosition()
 
     local current_card = getObjectFromGUID(card_guid)
@@ -313,51 +372,53 @@ function createPlayerSelectButtons(currentPlayer, deck, card_guid, callback_func
     function createPlayerSelectButtonsCoroutine()
         broadcastToColor('Click on the card in front of the person you want to target.', currentPlayer, {1, 1, 1})
         local card_name = 'Fake ' .. current_card.getName() .. ' Card'
-        for playerColor, state in pairs(active_players) do
-            if state == true then
-                _G[playerColor .. callback_func_name] = function(obj, clicking_player, alt)
-                    _G[callback_func_name](playerColor, clicking_player, current_card)
-                end
-
-                local params = {rotation = {0, 0, 180}}
-                local card = current_card.clone(params)
-                card.setDescription(card_name)
-                local color_table = stringColorToRGB(playerColor)
-                local color_str = '{' .. color_table[1] .. ', ' .. color_table[2] .. ', ' .. color_table[3] .. ', ' .. color_table[4] .. '}'
-                card.setLuaScript(
-                    'playerColor = \'' .. playerColor .. '\'\r\n\r\n' ..
-                    'function onCollisionEnter(collision_info)\r\n' ..
-                    '	local ph = Player[playerColor].getPlayerHand()\r\n' ..
-                    '	if ph then\r\n' ..
-                    '		self.setRotation({0, ph[\'rot_y\']+180, 0})\r\n' ..
-                    '	end\r\n' ..
-                    '	self.setLock(true)\r\n' ..
-                    'end\r\n\r\n' ..
-                    'function onLoad(saveString)\r\n' ..
-                    '	local button = {}\r\n' ..
-                    '	button.click_function = \'' .. playerColor .. callback_func_name .. '\'\r\n' ..
-                    '	button.label = \'' .. playerColor .. '\'\r\n' ..
-                    '	button.function_owner = Global\r\n' ..
-                    '	button.position = {0, 3, 0}\r\n' ..
-                    '	button.rotation = {0, 0, 0}\r\n' ..
-                    '	button.width = 800\r\n' ..
-                    '	button.height = 600\r\n' ..
-                    '	button.font_size = 150\r\n' ..
-                    '   button.color = ' .. color_str .. '\r\n' ..
-                    '   button.font_color = {0, 0, 0, 1}\r\n' ..
-                    '	self.createButton(button)\r\n' ..
-                    'end')
-                local transform = Player[playerColor].getHandTransform()
-                local dist = 15
-                local new_position = {
-                    transform.position[1] + dist * transform.forward[1],
-                    transform.position[2] + dist * transform.forward[2],
-                    transform.position[3] + dist * transform.forward[3],
-                }
-                card.setPositionSmooth(new_position, false, false)
-                card.setRotationSmooth(transform.rotation, false, false)
-                wait(3)
+        local turnTracker = getObjectFromGUID(TURN_TRACKER_GUID)
+        local active_players = turnTracker.getVar('active_players')
+        print(active_players)
+        log(active_players)
+        for _, playerColor in ipairs(active_players) do
+            _G[playerColor .. callback_func_name] = function(obj, clicking_player, alt)
+                _G[callback_func_name](playerColor, clicking_player, current_card)
             end
+
+            local params = {rotation = {0, 0, 180}}
+            local card = current_card.clone(params)
+            card.setDescription(card_name)
+            local color_table = stringColorToRGB(playerColor)
+            local color_str = '{' .. color_table[1] .. ', ' .. color_table[2] .. ', ' .. color_table[3] .. ', ' .. color_table[4] .. '}'
+            card.setLuaScript(
+                'playerColor = \'' .. playerColor .. '\'\r\n\r\n' ..
+                'function onCollisionEnter(collision_info)\r\n' ..
+                '	local ph = Player[playerColor].getPlayerHand()\r\n' ..
+                '	if ph then\r\n' ..
+                '		self.setRotation({0, ph[\'rot_y\']+180, 0})\r\n' ..
+                '	end\r\n' ..
+                '	self.setLock(true)\r\n' ..
+                'end\r\n\r\n' ..
+                'function onLoad(saveString)\r\n' ..
+                '	local button = {}\r\n' ..
+                '	button.click_function = \'' .. playerColor .. callback_func_name .. '\'\r\n' ..
+                '	button.label = \'' .. playerColor .. '\'\r\n' ..
+                '	button.function_owner = Global\r\n' ..
+                '	button.position = {0, 3, 0}\r\n' ..
+                '	button.rotation = {0, 0, 0}\r\n' ..
+                '	button.width = 800\r\n' ..
+                '	button.height = 600\r\n' ..
+                '	button.font_size = 150\r\n' ..
+                '   button.color = ' .. color_str .. '\r\n' ..
+                '   button.font_color = {0, 0, 0, 1}\r\n' ..
+                '	self.createButton(button)\r\n' ..
+                'end')
+            local transform = Player[playerColor].getHandTransform()
+            local dist = 15
+            local new_position = {
+                transform.position[1] + dist * transform.forward[1],
+                transform.position[2] + dist * transform.forward[2],
+                transform.position[3] + dist * transform.forward[3],
+            }
+            card.setPositionSmooth(new_position, false, false)
+            card.setRotationSmooth(transform.rotation, false, false)
+            wait(3)
         end
         destroyObject(current_card)
         return true
@@ -369,8 +430,11 @@ function createPlayerSelectButtons(currentPlayer, deck, card_guid, callback_func
 end
 
 function removePlayer(player)
-    active_players[player] = false
-    deactivatePlayerZones(player)
+    broadcastToAll(player .. ' loses!')
+
+    local turnTracker = getObjectFromGUID(TURN_TRACKER_GUID)
+    turnTracker.call('removePlayer', player)
+
     local discardPile = getObjectFromGUID(DISCARD_PILE_GUID)
     local cards = {}
     for _, object in ipairs(Player[player].getHandObjects()) do
@@ -379,85 +443,19 @@ function removePlayer(player)
         end
     end
     discardPile.call('discardCards', cards)
+    Wait.condition(function() deactivatePlayerZones(player) end, function() return #(Player[player].getHandObjects()) ~= 0 end)
 end
 
-function endTurn(draw)
-    current_player_remaining_turns = current_player_remaining_turns - 1
-    if draw == true then
-        local drawPile = getObjectFromGUID(DRAW_PILE_GUID)
-        drawPile.call('drawTopCard', {player, 1})
-    end
-end
-
-function setPlayerTurn(new_player)
-    if USE_TURN_SYSTEM then
-        setTurn(new_player)
-    end
-end
-
-function reverseTurnOrder()
-    if USE_TURN_SYSTEM then
-        Turns.reverse_order = not Turns.reverse_order
-    end
-end
-
-function onSuccessfulPlayerDraw(card)
-    local player = Turns.turn_color
+function onSuccessfulPlayerDraw(player, card)
     local hand_objs = Player[player].getHandObjects()
     for _, obj in ipairs(hand_objs) do
         obj.setHiddenFrom({})
     end
 end
 
-function passTurn()
-    setTurn(Turns.getNextTurnColor())
-end
-
-function previousTurn()
-    setTurn(Turns.getPreviousTurnColor())
-end
-
---Hack to change the current player turn if using TTS's turn API
-function setTurn(new_player)
-    if Turns.type == 1 then
-        Turns.type = 2
-        Turns.order = Player.getAvailableColors()
-    end
-    local order = Turns.order
-    Turns.enable = false
-    new_player_index = 1
-    for i, color in ipairs(order) do
-        if color == new_player then
-            new_player_index = i
-        end
-    end
-    rotate_inplace(order, 11 - new_player_index, #order)
-    Turns.order = order
-    Turns.enable = true
-end
-
-function getTurnOrder()
-    local players = {}
-    for _, player in pairs(Player.getAvailableColors()) do
-        if state == true then
-            players[#players + 1] = player
-        end
-    end
-end
-
-function reverse(t, i, j)
-  while i < j do
-    t[i], t[j] = t[j], t[i]
-    i, j = i+1, j-1
-  end
-end
-
-function rotate_inplace(t, d, n)
-  n = n or #t
-  d = (d or 1) % n
-  reverse(t, 1, n)
-  reverse(t, 1, d)
-  reverse(t, d+1, n)
+function getCurrentPlayerColor()
+    local turnTracker = getObjectFromGUID(TURN_TRACKER_GUID)
+    return turnTracker.call('getCurrentPlayerColor')
 end
 
 function getDeckFromZone(zone_name)
@@ -487,4 +485,108 @@ end
 
 function wait(numFrames)
 	for i=1,numFrames,1 do coroutine.yield(0) end
+end
+
+function shuffleCardsInPlayerHand(player)
+    local objects = Player[player].getHandObjects()
+    local cards = {}
+    for _, object in ipairs(objects) do
+        if object.tag == 'Card' then
+            cards[#cards + 1] = object
+        end
+    end
+    local new_deck = group(cards)[1]
+
+    Wait.condition(function()
+        new_deck.shuffle()
+        new_deck.deal(#new_deck.getObjects(), player)
+    end, function() return not new_deck.spawning end)
+end
+
+function createSecondHiddenZoneForPlayer(player)
+    local hidden_zone = getObjectFromGUID(HIDDEN_ZONE_GUIDS[player]).clone()
+    local scripting_zone = getObjectFromGUID(SCRIPTING_ZONE_GUIDS[player]).clone()
+    local scale = hidden_zone.getScale()
+    local new_scale = {scale[1] * 2, scale[2], scale[3]}
+
+    hidden_zone.setPosition(getOffsetFromPlayerHand(player, 10))
+    hidden_zone.setScale(new_scale)
+    scripting_zone.setPosition(getOffsetFromPlayerHand(player, 10))
+    scripting_zone.setScale(new_scale)
+    return {hidden_zone, scripting_zone}
+end
+
+function getOffsetFromPlayerHand(player, forward, right, up)
+    local hand = Player[player].getHandTransform()
+    forward = forward or 0
+    right = right or 0
+    up = up or 0
+    return {
+        hand.position[1] + forward * hand.forward[1] + right * hand.right[1] + up * hand.up[1],
+        hand.position[2] + forward * hand.forward[2] + right * hand.right[2] + up * hand.up[2],
+        hand.position[3] + forward * hand.forward[3] + right * hand.right[3] + up * hand.up[3],
+    }
+end
+
+function countNumberOfMatchingCardsInZone(zone, card)
+    local count = 0
+
+    for i, object in ipairs(zone.getObjects()) do
+        if object.tag == 'Card' then
+            if object.getName() == card then
+                count = count + 1
+            end
+        end
+    end
+
+    return count
+end
+
+function checkExplodingKittenCount(player)
+    log(player, 'checkExplodingKittenCount')
+    local zone = getObjectFromGUID(SCRIPTING_ZONE_GUIDS[player])
+    required_defuse = countNumberOfMatchingCardsInZone(zone, 'Exploding Kitten') - countNumberOfMatchingCardsInZone(zone, 'Streaking Kitten')
+    local defuses = countNumberOfMatchingCardsInZone(zone, 'Defuse')
+    if defuses < required_defuse then
+        removePlayer(player)
+        return false
+    elseif required_defuse > 0 then
+        broadcastToColor('You must play and defuse at least ' .. required_defuse .. ' Exploding Kitten(s) before you can end your turn.', player, {1, 0, 0})
+    end
+    return true
+end
+
+function callAfterSpawnFinished(func, object, object2)
+    Wait.condition(func, function() return (object == nil or not object.spawning) and (object2 == nil or not object2.spawning) end)
+end
+
+function onChat(message, player)
+    if message == 'c' then
+        checkExplodingKittenCount(player.color)
+    end
+end
+
+function actionInProgress()
+    local result = alter_the_future or targeted_attack or defusing
+    log(result, 'actionInProgress')
+    return result
+end
+
+function isEndingTurnAllowed()
+    log(required_defuse, 'required defuse')
+    log(kittens_played, 'kittens played')
+    log(defuses_played, 'defuses_played')
+    local result = not actionInProgress() and (kittens_played >= required_defuse and defuses_played >= kittens_played)
+    log(result, 'isEndingTurnAllowed')
+    return result
+end
+
+function resetTurnState()
+    drawing = false
+    alter_the_future = false
+    targeted_attack = false
+    defusing = false
+    required_defuse = 0
+    kittens_played = 0
+    defuses_played = 0
 end

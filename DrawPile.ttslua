@@ -2,9 +2,16 @@
 ZONE_NAME = "DRAW_ZONE_GUID"
 PRINT_NAME = "Draw Pile"
 
+ZONE_GUID = Global.getVar(ZONE_NAME)
+
 --Variable
 loadDone = false
 waitId = nil
+
+callback_context = nil
+callback_active = nil
+callback_params = {}
+callback_count = 0
 
 function onLoad()
 	loadDone = true
@@ -27,30 +34,36 @@ function secondCheck()
 end
 
 function countCards()
-	local deck = nil
-	local deck_ct = 0
-	local card_ct = 0
-	local zone = getObjectFromGUID(Global.getVar(ZONE_NAME))
+	local zone = getObjectFromGUID(ZONE_GUID)
 	local object
 
 	local inZone = zone.getObjects()
-    local primaryObj = nil
+
+	local objects_to_group = {}
+
 	for _, object in ipairs(inZone) do
 		if object.tag == 'Card' or object.tag == 'Deck' then
-			if primaryObj == nil then
-	            primaryObj = object
-	        else
-	            primaryObj = primaryObj.putObject(object)
-	        end
+			objects_to_group[#objects_to_group + 1] = object
 		end
 	end
 
-	local topCard = 'None'
+	local primaryObj = group(objects_to_group)[1]
 
-	if primaryObj ~= nil then
-        local pilePosition = self.getPosition()
-        primaryObj.setPositionSmooth({pilePosition[1], primaryObj.getPosition()[2], pilePosition[3]}, false, false)
-	end
+	Wait.condition(function()
+		if primaryObj ~= nil then
+	        local pilePosition = self.getPosition()
+	        primaryObj.setPositionSmooth({pilePosition[1], primaryObj.getPosition()[2], pilePosition[3]}, false, false)
+		end
+
+		if callback_active ~= nil then
+			local size = getDeckSize()
+			if size == callback_count then
+				local callback = callback_active
+				callback_active = nil
+				callback_context.call(callback, callback_params)
+			end
+		end
+	end, function() return primaryObj == nil or not primaryObj.spawning end, 3, function() print('Grouping failed') end)
 end
 
 function getDeckFromZone()
@@ -59,11 +72,28 @@ end
 
 function drawTopCard(params)
     local deck = getDeckFromZone()
-    player = params['player']
-    count = params['count']
-	zone = params['zone']
-    print('Dealing ' .. (count or 1) .. ' card(s) to ' .. player)
-    deck.deal(count or 1, player)
+    local player = params['player']
+    local count = params['count'] or 1
+	local zone = params['zone']
+
+    print('Dealing ' .. count .. ' card(s) to ' .. player)
+
+	local offset = {0, 0, 0}
+	local dx = 0
+	if zone ~= nil then
+		local zone_pos = zone.getPosition()
+		local hand_pos = Player[player].getHandTransform().position
+		local scale = zone.getScale()
+		offset = {zone_pos[1] - hand_pos[1] - 0.5 * scale[1], zone_pos[2] - hand_pos[2], zone_pos[3] - hand_pos[3]}
+		dx = 0.8 * scale[1] / count
+	end
+
+	for i=1, count do
+		deck.dealToColorWithOffset({offset[1] + i * dx, offset[2] + i * 0.2, offset[3]}, false, player)
+		if deck.remainder ~= nil then
+			deck = deck.remainder
+		end
+	end
 end
 
 function drawBottomCard(player)
@@ -133,11 +163,21 @@ function removeCardsWithName(name)
             guid              = guid
         })
     end
+end
 
-    --deck.shuffle()
+function getDeckSize()
+	local deck = getDeckFromZone()
+	return #(deck.getObjects())
 end
 
 function shuffle()
     local deck = getDeckFromZone()
     deck.shuffle()
+end
+
+function runFuncWhenDeckSizeHits(params)
+	callback_context = params[1]
+	callback_active = params[2]
+	callback_params = params[3]
+	callback_count = params[4]
 end

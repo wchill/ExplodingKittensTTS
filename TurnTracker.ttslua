@@ -1,0 +1,268 @@
+ALL_COLORS = {'White', 'Brown', 'Red', 'Orange', 'Yellow', 'Green', 'Teal', 'Blue', 'Purple', 'Pink'}
+
+active_players = {}
+current_player_remaining_turns = 1
+next_player_remaining_turns = 1
+order_reversed = false
+
+function onSave()
+    local data_to_save = {cl=active_players, ci=currentIndex, dp=deltaPos}
+    saved_data = JSON.encode(data_to_save)
+    return saved_data
+end
+
+function onload(saved_data)
+    if saved_data ~= "" and false then
+        --Set up information off of loaded_data
+        local loaded_data = JSON.decode(saved_data)
+        active_players = loaded_data.cl
+        currentIndex = loaded_data.ci
+        deltaPos = loaded_data.dp
+    else
+        self.setScale({2.9, 0.5, 2.9})
+
+        --Set up information for if there is no saved saved data
+        active_players = getSeatedColors()
+        currentIndex = 1
+        local scale = self.getScale()
+        deltaPos = {0,1,scale[3] * -2 - 3}
+    end
+
+    for _, color in ipairs(active_players) do
+        if Player[color].getPlayerHand() == nil then
+            currentIndex = 0
+            active_players = getSeatedColors()
+            break
+        end
+    end
+    if #active_players > 0 then
+        moveToolToPlayer()
+    end
+
+    refreshButtons()
+end
+
+--End turn button
+function clickEndTurn(_, clickerColor)
+    if isClickAllowed(clickerColor) == true then
+        if Global.call('isEndingTurnAllowed') then
+            local drawPile = getObjectFromGUID(Global.getVar('DRAW_PILE_GUID'))
+
+            Global.setVar('drawing', true)
+            drawPile.call('drawTopCard', {player=active_players[currentIndex], count=1})
+            Wait.condition(endCurrentTurn, function() return not Global.getVar('drawing') end)
+        else
+            broadcastToColor('You cannot end your turn yet!', active_players[currentIndex], {1, 0, 0})
+        end
+    end
+end
+
+function endCurrentTurn()
+    if Global.call('isEndingTurnAllowed') then
+        if current_player_remaining_turns > 1 then
+            current_player_remaining_turns = current_player_remaining_turns - 1
+            refreshButtons()
+        else
+            nextTurn()
+        end
+    else
+        broadcastToColor('You cannot end your turn yet!', active_players[currentIndex], {1, 0, 0})
+    end
+end
+
+function setNextPlayerTurns(count)
+    next_player_remaining_turns = count
+end
+
+function nextTurn(next_player)
+    if #active_players > 0 then
+        --Set index of next color
+        if next_player ~= nil then
+            currentIndex = findIndexOfPlayer(next_player)
+        else
+            currentIndex = getNextPlayerIndex()
+        end
+        current_player_remaining_turns = next_player_remaining_turns
+        next_player_remaining_turns = 1
+        --Activate move
+        moveToolToPlayer()
+        refreshButtons()
+    end
+end
+
+function reverseTurnOrder()
+    order_reversed = not order_reversed
+    local direction = 'clockwise'
+    if order_reversed then
+        direction = 'counter-clockwise'
+    end
+    refreshButtons()
+    broadcastToAll('The turn order is now ' .. direction)
+end
+
+function removePlayer(player)
+    local next_player = active_players[currentIndex]
+    if player == next_player then
+        next_player = active_players[getNextPlayerIndex()]
+    end
+
+    local new_active_players = {}
+    for _, color in ipairs(active_players) do
+        if color ~= player then
+            new_active_players[#new_active_players + 1] = color
+        end
+    end
+    active_players = new_active_players
+
+    currentIndex = findIndexOfPlayer(next_player)
+
+    moveToolToPlayer()
+    refreshButtons()
+end
+
+--[[            Utility functions            ]]
+
+function findIndexOfPlayer(player)
+    for i, color in ipairs(active_players) do
+        if color == player then
+            return i
+        end
+    end
+    return nil
+end
+
+function getNextPlayerIndex()
+    if not order_reversed then
+        if currentIndex == #active_players then return 1
+        else return currentIndex + 1 end
+    else
+        if currentIndex == 1 then return #active_players
+        else return currentIndex - 1 end
+    end
+end
+
+function getSeatedColors()
+    local seated = {}
+    for _, color in ipairs(ALL_COLORS) do
+        if Player[color].seated then
+            seated[#seated + 1] = color
+        end
+    end
+    return seated
+end
+
+function getCurrentPlayerColor()
+    return active_players[currentIndex]
+end
+
+--Moves the tool to whichever seat currentIndex of colorList is.
+function moveToolToPlayer()
+    self.setLock(true)
+    local playerHand = Player[active_players[currentIndex]].getPlayerHand()
+    local rot = {0, playerHand.rot_y + 180, 0}
+    local pos = {
+        playerHand.pos_x + (playerHand.trigger_forward_x * deltaPos[3]) + (playerHand.trigger_right_x * deltaPos[1]),
+        playerHand.pos_y + deltaPos[2],
+        playerHand.pos_z + (playerHand.trigger_forward_z * deltaPos[3]) + (playerHand.trigger_right_z * deltaPos[1])
+    }
+    self.setPositionSmooth(pos, false, false)
+    self.setRotationSmooth(rot, false, false)
+    self.setColorTint(stringColorToRGB(active_players[currentIndex]))
+    broadcastToAll("-"..active_players[currentIndex].."'s Turn-", stringColorToRGB(active_players[currentIndex]))
+end
+
+--Removes colors from colorList that do not exist on the actual table
+function removeInvalidColorsFromColorList()
+    for i, color in ipairs(active_players) do
+        if not Player[color].seated then
+            table.remove(active_players, i)
+            removeInvalidColorsFromColorList()
+            break
+        end
+    end
+end
+
+--Creates the printToAll strings and prints them
+function printMessageToAll(type, clickerColor, playerColor)
+    local stringToPrint, key = "", type
+    if active_players[currentIndex] == clickerColor then key = key .. "Match"
+    else key = key .. "Miss" end
+    --This for loop is assembling an approprite string from a table of strings
+    --Certain strings are replaced by parameter data
+    for _, string in ipairs(printMessageStringGenerationData[key]) do
+        if string == "CLICKC_NAME" then
+            stringToPrint = stringToPrint..Player[clickerColor].steam_name
+        elseif string == "CURRENTC" then
+            stringToPrint = stringToPrint..active_players[currentIndex]
+        elseif string == "PLAYERC" then
+            stringToPrint = stringToPrint..playerColor
+        else
+            stringToPrint = stringToPrint..string
+        end
+    end
+    printToAll(stringToPrint, stringColorToRGB(active_players[currentIndex]))
+end
+
+--Used to determine if a player is allowed to click a given button
+function isClickAllowed(clickerColor)
+    if Player[clickerColor].host==true then
+        return true
+    elseif Player[clickerColor].promoted==true then
+        return true
+    elseif clickerColor==active_players[currentIndex] then
+        return true
+    elseif clickerColor=="" then
+        return true
+    else
+        return false
+    end
+end
+
+--[[            Button Creation/Destruction/Editing            ]]
+
+--Spawns End/Back/Set buttons and color buttons (for the word list)
+function refreshButtons()
+    self.clearButtons()
+    --Marker next to name
+    local iOffset = currentIndex
+    self.createButton({
+        click_function='none', function_owner=self,
+        position={-0.8, 0.2, -0.9}, height=0, width=0, font_size=150,
+        font_color=stringColorToRGB('White'),
+        label='Turns Remaining: ' .. tostring(current_player_remaining_turns)
+    })
+    if not order_reversed then
+        self.createButton({
+            click_function='none', function_owner=self,
+            position={-2.0, 0.2, 0.3}, height=0, width=0, font_size=150,
+            font_color=stringColorToRGB('White'), label='←',
+        })
+    else
+        self.createButton({
+            click_function='none', function_owner=self,
+            position={0.4, 0.2, 0.3}, height=0, width=0, font_size=150,
+            font_color=stringColorToRGB('White'), label='→',
+        })
+    end
+    self.createButton({
+        click_function='clickEndTurn', function_owner=self,
+        position={-0.8, 0.2, 0.3}, height=800, width=800, font_size=150,
+        label='End Turn',
+    })
+    removeInvalidColorsFromColorList()
+    for i, color in ipairs(active_players) do
+        local funcName = "clickActive"..color
+        local func = function(o,c) clickActiveColor(color, c, i) end
+        --Display names only
+        local text = color
+        if #active_players > 0 and iOffset == i then
+            text = '= ' .. text .. ' ='
+        end
+        self.createButton({
+            label=text, click_function='none', function_owner=self,
+            position={1.5,0.2,-1.125+0.25*(i-1)}, height=0, width=0,
+            font_color=stringColorToRGB(color), font_size=100
+        })
+        self.setVar(funcName, func)
+    end
+end
